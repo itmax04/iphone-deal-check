@@ -7,10 +7,35 @@ import { escapeHtml as e } from './telegram.js';
 
 export const MIN_COMPARABLES = 5;
 
-export async function analyze(ad, buyPrice, { rates, margin, cache }) {
+/** Объединить чтение описания нейросетью (основа) с правилами по словам (страховка). */
+function mergeReading(cond, desc) {
+  if (!desc) return cond;
+  const battery = cond.battery ?? desc.battery;
+  const uniq = (a) => [...new Set(a)];
+  let grade = desc.condition === 'for_parts' ? 'defects' : desc.condition || cond.grade;
+  // Нейросеть иногда оставляет «очень хорошее» при реальном дефекте — тогда сравниваем на ступень ниже (как правила).
+  const seriousDefect = desc.defects.some((d) => /тресн|трещин|разбит|скол|вмятин|не работ|погнут|битый/i.test(d)) || (battery != null && battery < 80);
+  const DOWN = { like_new: 'very_good', very_good: 'good' };
+  if (seriousDefect && DOWN[grade]) grade = DOWN[grade];
+  const minuses = [];
+  if (battery != null && battery < 80) minuses.push(`аккумулятор ${battery}% (< 80% — Apple считает изношенным)`);
+  else if (battery != null && battery < 85) minuses.push(`аккумулятор ${battery}%`);
+  return {
+    ...cond,
+    reading: desc,
+    battery,
+    grade,
+    // Стоп-факторы и признаки обмана правил (с учётом отрицаний) сохраняем — это страховка от пропуска нейросетью.
+    blockers: uniq([...cond.blockers, ...desc.blockers]),
+    minuses,
+    pluses: [],
+  };
+}
+
+export async function analyze(ad, buyPrice, { rates, margin, cache, desc = null }) {
   const model = modelOf(ad.title) || modelOf(ad.description);
   const storage = storageOf(Object.entries(ad.details || {}).find(([k]) => /^speicher/i.test(k))?.[1] || '') || storageOf(ad.title) || storageOf(ad.description);
-  const cond = assessCondition(ad);
+  const cond = mergeReading(assessCondition(ad), desc);
   if (!model) return { ad, cond, verdict: 'unknown', reason: 'не понял модель iPhone по объявлению' };
   const market = await olxComparables(model, storage, rates, { cache });
 
@@ -26,6 +51,7 @@ export async function analyze(ad, buyPrice, { rates, margin, cache }) {
 
   let verdict, reason;
   if (cond.blockers.length) { verdict = 'avoid'; reason = `стоп-фактор: ${cond.blockers.join(', ')}`; }
+  else if (cond.grade === 'defects') { verdict = 'avoid'; reason = 'по описанию телефон с дефектом — на OLX сравниваю только исправные, маржу не посчитать честно'; }
   else if (cond.scam.length) { verdict = 'avoid'; reason = `подозрительно: ${cond.scam.join(', ')}`; }
   else if (profit == null) { verdict = 'unknown'; reason = 'на OLX не нашлось похожих объявлений для сравнения'; }
   else if (profit >= margin) { verdict = 'buy'; reason = `маржа ${profit} € ≥ порога ${margin} €`; }
@@ -42,6 +68,16 @@ export function formatResult(r) {
   const a = r.ad;
   const c = r.cond;
   const lines = [];
+  const d = c.reading;
+  if (d) {
+    // Сначала — что прочитано в описании, потом — оценка.
+    lines.push(`📝 <b>Описание</b> (прочитано нейросетью)\n${e(d.summary || '—')}`);
+    if (d.defects.length) lines.push(`➖ ${e(d.defects.join(' · '))}`);
+    if (d.repairs.length) lines.push(`🔧 ${e(d.repairs.join(' · '))}`);
+    if (d.positives.length) lines.push(`➕ ${e(d.positives.join(' · '))}`);
+    if (d.redFlags.length) lines.push(`🚩 ${e(d.redFlags.join(' · '))}`);
+    lines.push('');
+  }
   lines.push(`${VERDICT[r.verdict]}\n${e(r.reason)}`);
   if (r.lowData && r.verdict !== 'avoid' && r.base?.n) lines.push(`⚠️ Мало данных: на OLX всего ${r.base.n} похожих — решай осторожно.`);
   lines.push('');
@@ -52,7 +88,7 @@ export function formatResult(r) {
     lines.push(`📊 Маржа: <b>${r.profit >= 0 ? '+' : ''}${r.profit} €</b> (порог ${r.margin} €, /margin) · выгодно до <b>${Math.max(0, r.maxPrice)} €</b>`);
   }
   lines.push('');
-  lines.push(`🔎 <b>Состояние по объявлению</b>: ${e(c.zustand || 'не указано')}${c.akku ? ` · Akkuzustand: ${e(c.akku)}` : ''}${c.battery ? ` · аккумулятор ${c.battery}%` : ''} → сравниваю как «${GRADE_LABEL[c.grade]}»`);
+  lines.push(`🔎 <b>Состояние</b>: ${e(c.zustand || 'не указано')}${c.akku ? ` · Akkuzustand: ${e(c.akku)}` : ''}${c.battery ? ` · аккумулятор ${c.battery}%` : ''} → сравниваю как «${GRADE_LABEL[c.grade]}»${d ? '' : ' (описание прочитано по ключевым словам)'}`);
   if (c.blockers.length) lines.push(`⛔ ${e(c.blockers.join(' · '))}`);
   if (c.scam.length) lines.push(`🚩 ${e(c.scam.join(' · '))}`);
   if (c.minuses.length) lines.push(`➖ ${e(c.minuses.join(' · '))}`);

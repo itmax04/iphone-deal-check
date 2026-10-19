@@ -3,6 +3,7 @@
 import { call, sendText, escapeHtml as e } from './telegram.js';
 import { adUrlFrom, adUrlsFrom, fetchAd, AdError } from './kleinanzeigen.js';
 import { analyzePhotos } from './photos.js';
+import { readDescription } from './describe.js';
 import { analyze, formatResult } from './analyze.js';
 import { modelOf, storageOf } from './iphone.js';
 import { kv } from './store.js';
@@ -28,7 +29,7 @@ const HELP = `<b>Проверка iPhone с Kleinanzeigen по рынку OLX.ua
 Несколько объявлений сразу: пришли 2–5 ссылок одним сообщением — сравню таблицей.
 /history — последние проверки.
 
-Маржа = цена быстрой продажи на OLX (нижняя четверть цен частников, по курсу НБУ) − цена покупки.
+Бот сначала читает описание (нейросеть), затем считает маржу.\nМаржа = цена быстрой продажи на OLX (нижняя четверть цен частников, по курсу НБУ) − цена покупки.
 Доставку и растаможку бот не считает. Состояние оценивается по полям «Zustand», «Akkuzustand» и тексту объявления.
 
 /margin 80 — порог маржи для «покупать» (сейчас: {margin} €)`;
@@ -69,8 +70,8 @@ async function askPrice(env, ad) {
 
 async function runAnalysis(env, ad, price) {
   await call(env, 'sendChatAction', { action: 'typing' }).catch(() => {});
-  const [rates, margin] = await Promise.all([getRates(env), getMargin(env)]);
-  const r = await analyze(ad, price, { rates, margin, cache: env.STATE });
+  const [rates, margin, desc] = await Promise.all([getRates(env), getMargin(env), readDescription(env, ad, { cache: env.STATE })]);
+  const r = await analyze(ad, price, { rates, margin, cache: env.STATE, desc });
   await sendText(env, formatResult(r), {
     reply_markup: { inline_keyboard: [[{ text: '🔁 Другая цена', callback_data: 'again' }, { text: '🔗 Объявление', url: ad.url }]] },
   });
@@ -128,7 +129,8 @@ async function runBatch(env, urls) {
   const rows = [];
   for (const ad of ads) {
     if (ad.error) { rows.push({ ad, error: ad.error }); continue; }
-    rows.push({ ad, r: await analyze(ad, ad.price, { rates, margin, cache: env.STATE }) });
+    const desc = await readDescription(env, ad, { cache: env.STATE });
+    rows.push({ ad, r: await analyze(ad, ad.price, { rates, margin, cache: env.STATE, desc }) });
   }
   const ok = rows.filter((x) => x.r);
   ok.sort((a, b) => (b.r.profit ?? -1e9) - (a.r.profit ?? -1e9));
@@ -228,9 +230,9 @@ export default {
     if (url.pathname === '/run') {
       // Проверка без Telegram: /run?key=…&url=<ссылка>&price=380
       const ad = await fetchAd(url.searchParams.get('url'));
-      const [rates, margin] = await Promise.all([getRates(env), getMargin(env)]);
+      const [rates, margin, desc] = await Promise.all([getRates(env), getMargin(env), readDescription(env, ad, { cache: env.STATE })]);
       const price = Number(url.searchParams.get('price')) || ad.price;
-      const r = await analyze(ad, price, { rates, margin, cache: env.STATE });
+      const r = await analyze(ad, price, { rates, margin, cache: env.STATE, desc });
       const photos = url.searchParams.get('photos') === '1' ? await analyzePhotos(env, ad.photos) : undefined;
       return Response.json({ verdict: r.verdict, reason: r.reason, model: r.model, storage: r.storage, cond: r.cond, base: r.base, quickEur: r.quickEur, profit: r.profit, maxPrice: r.maxPrice, details: ad.details, photos, text: formatResult(r) });
     }
