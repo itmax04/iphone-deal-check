@@ -10,6 +10,10 @@ binding = "DB"
 database_name = "iphone-deal-check"
 database_id = "68d965eb-c27c-428c-a7fd-fb488215f506"
 
+# Workers AI — проверка фото (Mistral Small 3.1, бесплатный дневной лимит аккаунта).
+[ai]
+binding = "AI"
+
 [observability]
 enabled = true
 
