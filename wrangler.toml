@@ -1,0 +1,16 @@
+name = "iphone-deal-check"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Аккаунт Cloudflare lashkevych049 (как freelance-radar-bot; API-токен — в .env). Только webhook, без cron.
+# OLX.ua отвечает серверам Cloudflare (с домашнего IP — 403), поэтому бот работает только в облаке.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "iphone-deal-check"
+database_id = "68d965eb-c27c-428c-a7fd-fb488215f506"
+
+[observability]
+enabled = true
+
+# Секреты (не в файле): TELEGRAM_TOKEN (новый бот от @BotFather — вводит владелец), TELEGRAM_CHAT_ID, RUN_KEY, WEBHOOK_SECRET

@@ -1,0 +1,11 @@
+{
+  "name": "iphone-deal-check",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker: ссылка Kleinanzeigen + цена после торга → маржа по OLX.ua → покупать / торговаться / обходить",
+  "scripts": {
+    "deploy": "npx --yes wrangler@4 deploy",
+    "tail": "npx --yes wrangler@4 tail iphone-deal-check",
+    "db:schema": "npx --yes wrangler@4 d1 execute iphone-deal-check --remote --file schema.sql"
+  }
+}
